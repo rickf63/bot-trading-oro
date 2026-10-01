@@ -1,0 +1,2 @@
+- `2026-10-01 10:07:06` PRUEBA: orden limite 1 GLD a $1 -> pending_new
+- `2026-10-01 10:07:09` PRUEBA: orden cancelada -> canceled

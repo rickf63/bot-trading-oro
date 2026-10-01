@@ -18,6 +18,7 @@ Uso:
   python bot_alpaca.py simulacro  Calcula la senal sin enviar ordenes
   python bot_alpaca.py estado     Muestra cuenta, posicion y ordenes abiertas
   python bot_alpaca.py prueba     Orden limite inalcanzable + cancelacion (verifica conexion)
+  python bot_alpaca.py correo     Manda un correo de prueba (configura con set-gmail-password.ps1)
 
 Programador de tareas: lunes a viernes 16:00 hora CDMX (despues del cierre de NY
 todo el anio). Credenciales en D:\\BOTTRADER\\.env (usa set-alpaca-keys.ps1).
@@ -103,7 +104,8 @@ def anexar_csv(ruta, fila):
 def enviar_email(asunto, cuerpo):
     user, pwd = os.getenv("GMAIL_USER"), os.getenv("GMAIL_APP_PASSWORD")
     if not user or not pwd:
-        return
+        print("  Correo no configurado (corre set-gmail-password.ps1).")
+        return False
     try:
         msg = EmailMessage()
         msg["From"], msg["To"], msg["Subject"] = user, os.getenv("EMAIL_TO") or user, asunto
@@ -111,8 +113,11 @@ def enviar_email(asunto, cuerpo):
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as s:
             s.login(user, pwd)
             s.send_message(msg)
+        print(f"  Correo enviado: {asunto}")
+        return True
     except Exception as e:
         print(f"  Error al mandar correo: {e}")
+        return False
 
 
 # ----------------------------------------------------------------------
@@ -292,6 +297,62 @@ def ejecutar(simulacro=False):
                                 "efectivo": cuenta["cash"], "acciones": pos["qty"] if pos else 0})
 
 
+# ----------------------------------------------------------------------
+# DATOS PARA REPORTE Y DASHBOARDS (mismo formato que los archivos paper_*)
+# ----------------------------------------------------------------------
+def historial_equity():
+    """DataFrame fecha / equity_total con el equity diario de la cuenta segun Alpaca."""
+    h = alpaca("GET", "/v2/account/portfolio/history", params={"period": "1A", "timeframe": "1D"})
+    df = pd.DataFrame({"fecha": pd.to_datetime(h["timestamp"], unit="s").normalize(),
+                       "equity_total": h["equity"]})
+    df = df.dropna()
+    df = df[df["equity_total"] > 0]
+    return df.drop_duplicates("fecha", keep="last").reset_index(drop=True)
+
+
+def historial_trades():
+    """Operaciones ejecutadas de SIMBOLO: tipo COMPRA, STOP o CRUCE_BAJA, con pnl de cada venta."""
+    ordenes = alpaca("GET", "/v2/orders", params={"status": "closed", "symbols": SIMBOLO,
+                                                  "limit": 500, "direction": "asc", "nested": "true"})
+    llenas = []
+    for o in ordenes:
+        for x in [o] + (o.get("legs") or []):
+            if x["status"] in ("filled", "partially_filled") and float(x["filled_qty"] or 0) > 0:
+                llenas.append(x)
+    llenas.sort(key=lambda x: x["filled_at"])
+
+    filas, qty_abierta, costo = [], 0.0, 0.0
+    for x in llenas:
+        qty, precio = float(x["filled_qty"]), float(x["filled_avg_price"])
+        fecha = pd.Timestamp(x["filled_at"]).tz_convert("America/Mexico_City").tz_localize(None)
+        if x["side"] == "buy":
+            qty_abierta += qty
+            costo += qty * precio
+            filas.append({"fecha": fecha, "tipo": "COMPRA", "entrada": precio, "salida": 0.0,
+                          "unidades": qty, "pnl": 0.0})
+        else:
+            entrada = costo / qty_abierta if qty_abierta else precio
+            filas.append({"fecha": fecha, "tipo": "STOP" if x["type"] == "stop" else "CRUCE_BAJA",
+                          "entrada": entrada, "salida": precio, "unidades": qty,
+                          "pnl": qty * (precio - entrada)})
+            qty_abierta = max(qty_abierta - qty, 0.0)
+            costo = entrada * qty_abierta
+    df = pd.DataFrame(filas, columns=["fecha", "tipo", "entrada", "salida", "unidades", "pnl"])
+    df["fecha"] = pd.to_datetime(df["fecha"])  # tambien cuando no hay operaciones
+    return df
+
+
+def estado_actual():
+    """Posicion y stop actuales, con las mismas llaves que paper_estado.json."""
+    pos = posicion()
+    stops = [o for o in ordenes_abiertas() if o["type"] == "stop"]
+    return {"en_posicion": bool(pos),
+            "unidades": float(pos["qty"]) if pos else 0.0,
+            "precio_entrada": float(pos["avg_entry_price"]) if pos else 0.0,
+            "stop": float(stops[0]["stop_price"]) if stops else (cargar_estado().get("stop") or 0.0),
+            "pnl_no_realizado": float(pos["unrealized_pl"]) if pos else 0.0}
+
+
 def ver_estado():
     verificar_config()
     c = alpaca("GET", "/v2/account")
@@ -320,4 +381,6 @@ if __name__ == "__main__":
         sys.stdout = sys.stderr = open(BASE / "alpaca_bot.log", "a", encoding="utf-8", buffering=1)
     modo = sys.argv[1] if len(sys.argv) > 1 else "correr"
     {"correr": ejecutar, "simulacro": lambda: ejecutar(simulacro=True),
-     "estado": ver_estado, "prueba": prueba}[modo]()
+     "estado": ver_estado, "prueba": prueba,
+     "correo": lambda: enviar_email("Prueba Bot Oro Alpaca", "Si te llego este correo, las alertas funcionan."),
+     }[modo]()

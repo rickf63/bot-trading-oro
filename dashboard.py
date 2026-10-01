@@ -2,7 +2,7 @@
 """
 Dashboard - Paper Trading Bot Oro
 ==================================
-Lee paper_equity.csv y paper_trades.csv y genera
+Lee la cuenta paper de Alpaca (bot_alpaca.py) y genera
 una grafica en tema oscuro con el desempeno del bot.
 
 Uso:
@@ -10,47 +10,34 @@ Uso:
 """
 
 import os
-import json
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 from matplotlib.lines import Line2D
 from datetime import date
 
+import bot_alpaca as bot
+
 CAPITAL_INICIAL = 100_000
 DIR             = os.path.dirname(os.path.abspath(__file__))
-ARCHIVO_EQUITY  = os.path.join(DIR, "paper_equity.csv")
-ARCHIVO_TRADES  = os.path.join(DIR, "paper_trades.csv")
-ARCHIVO_ESTADO  = os.path.join(DIR, "paper_estado.json")
 
 
 def cargar_equity():
-    if not os.path.exists(ARCHIVO_EQUITY):
-        print("No existe paper_equity.csv. Corre paper_trading.py primero.")
-        return None
-    df = pd.read_csv(ARCHIVO_EQUITY, parse_dates=["fecha"])
-    return df.drop_duplicates("fecha").sort_values("fecha").reset_index(drop=True)
+    return bot.historial_equity()
 
 
 def cargar_trades():
-    if not os.path.exists(ARCHIVO_TRADES):
-        return pd.DataFrame()
-    df = pd.read_csv(ARCHIVO_TRADES, parse_dates=["fecha"])
+    df = bot.historial_trades()
     return df[df["tipo"] != "COMPRA"]
 
 
 def cargar_compras():
-    if not os.path.exists(ARCHIVO_TRADES):
-        return pd.DataFrame()
-    df = pd.read_csv(ARCHIVO_TRADES, parse_dates=["fecha"])
+    df = bot.historial_trades()
     return df[df["tipo"] == "COMPRA"]
 
 
 def cargar_estado():
-    if not os.path.exists(ARCHIVO_ESTADO):
-        return {}
-    with open(ARCHIVO_ESTADO) as f:
-        return json.load(f)
+    return bot.estado_actual()
 
 
 def calcular_metricas(eq, trades):
@@ -129,8 +116,8 @@ def graficar(eq, trades, compras, estado, m):
     ]
     ax_equity.legend(handles=leyenda, facecolor="#1a1a1a",
                      labelcolor="white", fontsize=8)
-    ax_equity.set_title("Equity Paper Trading — Bot Oro (GC=F)", fontsize=13)
-    ax_equity.set_ylabel("Capital (MXN)")
+    ax_equity.set_title("Equity Paper Trading — Bot Oro (GLD, Alpaca)", fontsize=13)
+    ax_equity.set_ylabel("Capital (USD)")
     ax_equity.yaxis.set_major_formatter(
         plt.FuncFormatter(lambda x, _: f"${x:,.0f}"))
     ax_equity.grid(alpha=0.15, color="#333333")
@@ -180,7 +167,7 @@ if __name__ == "__main__":
     compras = cargar_compras()
     estado  = cargar_estado()
     if eq is None or eq.empty:
-        print("Sin datos suficientes. Corre paper_trading.py al menos un dia.")
+        print("Sin datos suficientes en la cuenta de Alpaca.")
     else:
         m = calcular_metricas(eq, trades if not trades.empty else pd.DataFrame())
         graficar(eq, trades, compras, estado, m)

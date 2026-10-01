@@ -4,6 +4,7 @@ Dashboard Web - Bot de Paper Trading Oro
 =========================================
 Servidor Flask que muestra el estado del bot
 en tiempo real desde cualquier dispositivo.
+Lee los datos directo de la cuenta paper de Alpaca.
 
 Uso:
   python app.py
@@ -14,21 +15,16 @@ Luego abre en el navegador o celular:
   http://<IP-de-tu-PC>:5000
 
 Requisitos:
-  pip install flask pandas
+  pip install flask pandas requests python-dotenv truststore
 """
 
-import json
-import os
-from datetime import date
-import pandas as pd
+from datetime import datetime
 from flask import Flask, render_template_string, jsonify
+
+import bot_alpaca as bot
 
 app = Flask(__name__)
 
-DIR            = os.path.dirname(os.path.abspath(__file__))
-ARCHIVO_EQUITY = os.path.join(DIR, "paper_equity.csv")
-ARCHIVO_TRADES = os.path.join(DIR, "paper_trades.csv")
-ARCHIVO_ESTADO = os.path.join(DIR, "paper_estado.json")
 CAPITAL_INICIAL = 100_000
 
 # ----------------------------------------------------------------------
@@ -123,7 +119,7 @@ HTML = """
 </head>
 <body>
   <h1>🥇 Bot de Paper Trading — Oro</h1>
-  <p class="subtitulo">GC=F | EMA 10/21 | Stop ATR x1.5 | Actualizado: <span id="ts"></span></p>
+  <p class="subtitulo">GLD (Alpaca) | EMA 10/21 | Stop ATR x1.5 | Actualizado: <span id="ts"></span></p>
 
   <div class="grid-metricas" id="metricas"></div>
 
@@ -311,59 +307,31 @@ def index():
 
 @app.route("/api/datos")
 def datos():
-    # Equity
-    fechas = equity_serie = dd_serie = []
-    dias = 0
-    dd_max = rendimiento = 0.0
-    equity = CAPITAL_INICIAL
+    eq     = bot.historial_equity()
+    tr     = bot.historial_trades()
+    estado = bot.estado_actual()
 
-    if os.path.exists(ARCHIVO_EQUITY):
-        eq = pd.read_csv(ARCHIVO_EQUITY, parse_dates=["fecha"])
-        eq = eq.drop_duplicates("fecha").sort_values("fecha")
-        if not eq.empty:
-            fechas       = eq["fecha"].dt.strftime("%d/%m").tolist()
-            equity_serie = eq["equity_total"].round(2).tolist()
-            dd_s         = (eq["equity_total"] / eq["equity_total"].cummax() - 1) * 100
-            dd_serie     = dd_s.round(2).tolist()
-            dd_max       = dd_s.min()
-            equity       = float(eq["equity_total"].iloc[-1])
-            dias         = len(eq)
-            rendimiento  = (equity / CAPITAL_INICIAL - 1) * 100
+    equity = float(bot.alpaca("GET", "/v2/account")["equity"])
+    dd_s   = (eq["equity_total"] / eq["equity_total"].cummax() - 1) * 100
 
-    # Trades
-    trades = []
-    n_ops = win_rate = 0
-    if os.path.exists(ARCHIVO_TRADES):
-        tr = pd.read_csv(ARCHIVO_TRADES, parse_dates=["fecha"])
-        cerradas = tr[tr["tipo"].isin(["STOP", "CRUCE_BAJA"])]
-        n_ops    = len(cerradas)
-        if n_ops > 0:
-            gan      = cerradas[cerradas["pnl"].astype(float) > 0]
-            win_rate = len(gan) / n_ops * 100
-        trades = cerradas.to_dict("records")
-        for t in trades:
-            t["fecha"] = pd.Timestamp(t["fecha"]).strftime("%d/%m/%Y")
-
-    # Estado
-    en_posicion = False
-    if os.path.exists(ARCHIVO_ESTADO):
-        with open(ARCHIVO_ESTADO) as f:
-            estado = json.load(f)
-        en_posicion = estado.get("en_posicion", False)
+    cerradas = tr[tr["tipo"].isin(["STOP", "CRUCE_BAJA"])].copy()
+    n_ops    = len(cerradas)
+    win_rate = (cerradas["pnl"] > 0).sum() / n_ops * 100 if n_ops else 0
+    cerradas["fecha"] = cerradas["fecha"].dt.strftime("%d/%m/%Y")
 
     return jsonify({
-        "fecha_hoy":    str(date.today()),
+        "fecha_hoy":    datetime.now().strftime("%Y-%m-%d %H:%M"),
         "equity":       round(equity, 2),
-        "rendimiento":  round(rendimiento, 2),
-        "dd_max":       round(dd_max, 2),
-        "dias":         dias,
+        "rendimiento":  round((equity / CAPITAL_INICIAL - 1) * 100, 2),
+        "dd_max":       round(float(dd_s.min()) if len(dd_s) else 0.0, 2),
+        "dias":         len(eq),
         "n_ops":        n_ops,
-        "win_rate":     round(win_rate, 1),
-        "en_posicion":  en_posicion,
-        "fechas":       fechas,
-        "equity_serie": equity_serie,
-        "dd_serie":     dd_serie,
-        "trades":       trades,
+        "win_rate":     round(float(win_rate), 1),
+        "en_posicion":  estado["en_posicion"],
+        "fechas":       eq["fecha"].dt.strftime("%d/%m").tolist(),
+        "equity_serie": eq["equity_total"].round(2).tolist(),
+        "dd_serie":     dd_s.round(2).tolist(),
+        "trades":       cerradas.to_dict("records"),
     })
 
 
