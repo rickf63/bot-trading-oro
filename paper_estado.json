@@ -1,0 +1,10 @@
+{
+  "capital": 100000,
+  "en_posicion": false,
+  "unidades": 0.0,
+  "precio_entrada": 0.0,
+  "stop": 0.0,
+  "atr_entrada": 0.0,
+  "fecha_entrada": null,
+  "inicio": "2026-08-08"
+}

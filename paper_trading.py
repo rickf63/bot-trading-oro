@@ -43,7 +43,7 @@ VELAS_HISTORIA   = 60
 
 EMAIL_ORIGEN  = "ricomonsalvedelavega@gmail.com"
 EMAIL_DESTINO = "ricomonsalvedelavega@gmail.com"
-EMAIL_PASS    = "ckmwjbmrwjkpsoqq"
+EMAIL_PASS    = ""
 
 DIR             = os.path.dirname(os.path.abspath(__file__))
 ARCHIVO_ESTADO  = os.path.join(DIR, "paper_estado.json")
